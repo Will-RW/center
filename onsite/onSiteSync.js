@@ -308,5 +308,5 @@ cron.schedule('*/15 * * * *', () => {
   main();
 });
 
-/* Uncomment to run immediately during local testing */
+module.exports = { main };
 // main();
