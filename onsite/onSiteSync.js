@@ -6,7 +6,6 @@ const fetch = require("node-fetch");
 const axios = require("axios");
 const xml2js = require("xml2js");
 const cron = require("node-cron");
-const config = require("./config");
 const logger = require("./utils/logger");
 const {
   convertNumber,
