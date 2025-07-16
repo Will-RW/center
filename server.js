@@ -1,51 +1,32 @@
-/**** server.js ****/
-const fastify = require("fastify")();
-const fs = require("fs");
-const path = require("path");
+require('dotenv').config();
+const express = require('express');
+const cron    = require('node-cron');
 
-// Load domain map from JSON
-const raw = fs.readFileSync(path.join(__dirname, "domain.json"), "utf8");
-const domainMap = JSON.parse(raw);
+const app = express();
 
-// Load .env variables
-require("dotenv").config(); 
+/* --------------------  Wized dynamic script  -------------------- */
+app.get('/wized.js', require('./wized/route'));
 
-fastify.get("/wized.js", async (request, reply) => {
-  try {
-    // 1) Read the raw Wized export (with %%ID%% and %%TOKEN%% placeholders)
-    const exportPath = path.join(__dirname, "wized.js");
-    let contents = fs.readFileSync(exportPath, "utf8");
-
-    // 2) Get the "site" query param, e.g. ?site=southsider
-    const siteParam = request.query.site;
-
-    // 3) Lookup the domain entry by siteParam, fallback to "default"
-    const domainEntry = domainMap[siteParam] || domainMap.default;
-    const domainID = domainEntry.id || "none";
-
-    // 4) Pull the token from .env
-    // If .env is missing it, fallback to "UNSET" or something
-    const envToken = process.env.CENTROID_TOKEN || "UNSET";
-
-    // 5) Replace placeholders
-    contents = contents
-      .replace("%%ID%%", domainID)
-      .replace("%%TOKEN%%", envToken);
-
-    // 6) Send as JS
-    reply.type("application/javascript").send(contents);
-  } catch (err) {
-    console.error("Failed to read or parse wized.js:", err);
-    reply.code(500).send("Server Error");
-  }
+/* --------------------  RentCafe → Webflow  ---------------------- */
+const { runSyncJob: rentCafeJob } = require('./rentcafe/job');
+cron.schedule('0 */4 * * *', rentCafeJob);                 // every 4 h
+app.get('/sync-rentcafe', async (_, res) => {
+  await rentCafeJob();
+  res.end('RentCafe sync complete');
 });
 
-// Start server
-const port = process.env.PORT || 3000;
-fastify.listen({ port, host: "0.0.0.0" }, (err, address) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log(`Fastify server running at ${address}`);
+/* --------------------  On-Site → Webflow  ----------------------- */
+const { main: onSiteJob } = require('./onsite/onSiteSync');
+cron.schedule('*/15 * * * *', onSiteJob);                  // every 15 min
+app.get('/sync-onsite', async (_, res) => {
+  await onSiteJob();
+  res.end('On-Site sync complete');
 });
+
+/* --------------------  health-check root  ---------------------- */
+app.get('/', (_, res) => res.send('OK – unified service running'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () =>
+  console.log(`[boot] Server listening on ${PORT}`)
+);
