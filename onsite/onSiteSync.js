@@ -1,62 +1,78 @@
 /************************************************
- * onsite/onSiteSync.js – Self‑contained version
- * Combines logger, utils, and sync logic in ONE file
+ * onsite/onSiteSync.js – fully self-contained
+ *  • built-in logger (console-based)
+ *  • utility helpers inlined
+ *  • uses env vars for creds (ONSITE_USERNAME / ONSITE_PASSWORD)
  ************************************************/
 
-// ----------------------  External libs ----------------------
-const fetch  = require('node-fetch'); // Webflow REST v2
-const axios  = require('axios');      // OnSite XML endpoints
-const xml2js = require('xml2js');     // XML → JS
-const cron   = require('node-cron');  // Scheduler
+/* ---------- external libraries ---------- */
+const fetch  = require('node-fetch');   // Webflow API
+const axios  = require('axios');        // OnSite XML
+const xml2js = require('xml2js');       // XML → JS
+const cron   = require('node-cron');    // scheduler
 
-// ----------------------  Lightweight logger -----------------
-const pino = require('pino');
-const isDev = process.env.NODE_ENV !== 'production';
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: isDev ? {
-    target: 'pino-pretty',
-    options: { colorize: true, translateTime: 'SYS:standard', ignore: 'pid,hostname' }
-  } : undefined,
-  timestamp: pino.stdTimeFunctions.isoTime,
-});
+/* ---------- minimalist logger ----------- */
+const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
+const CURRENT = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.info;
+function log(l, ...args) {
+  if (LEVELS[l] > CURRENT) return;
+  const ts = new Date().toISOString();
+  console.log(`[${l.toUpperCase()}] ${ts}`, ...args);
+}
+const logger = {
+  error: (...a) => log('error', ...a),
+  warn:  (...a) => log('warn',  ...a),
+  info:  (...a) => log('info',  ...a),
+  debug: (...a) => log('debug', ...a),
+};
+
 logger.info('📣 OnSite sync script booted');
 
-// ----------------------  Utility helpers --------------------
-function convertNumber(value) {
-  if (typeof value === 'object' && value && value._) value = value._;
-  if (typeof value === 'string') value = value.replace(/[^0-9.-]+/g, '');
-  const num = parseFloat(value);
-  if (isNaN(num)) { logger.warn(`convertNumber failed: ${value}`); return null; }
-  return num;
+/* ---------- utility helpers ------------- */
+function convertNumber(v) {
+  if (v && typeof v === 'object' && v._) v = v._;
+  if (typeof v === 'string') v = v.replace(/[^0-9.-]+/g, '');
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
 }
-
-function convertBoolean(value) {
-  if (typeof value === 'object' && value && value._) value = value._;
-  if (typeof value === 'string') return value.toLowerCase() === 'true';
-  return Boolean(value);
+function convertBoolean(v) {
+  if (v && typeof v === 'object' && v._) v = v._;
+  return String(v).toLowerCase() === 'true';
 }
-
-function convertDate(value) {
-  if (!value || (typeof value === 'object' && value.$?.nil === 'true')) return null;
-  if (typeof value === 'object' && value._) value = value._;
-  if (typeof value === 'string') {
-    const d = new Date(value);
-    if (!isNaN(d)) return d.toISOString();
-  }
-  logger.warn(`convertDate failed: ${JSON.stringify(value)}`);
-  return null;
+function convertDate(v) {
+  if (!v || (typeof v === 'object' && v.$?.nil === 'true')) return null;
+  if (typeof v === 'object' && v._) v = v._;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toISOString();
 }
-
 function generateSlug(str) {
-  if (typeof str !== 'string' || !str.trim()) { logger.warn(`Bad slug input: ${str}`); return ''; }
-  return str.trim().toLowerCase().replace(/\s+/g, '-');
+  return String(str || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+}
+function roundUp(n) { return typeof n === 'number' ? Math.ceil(n) : n; }
+function getStyleIdValue(f) { return typeof f === 'object' && f ? f._ : f; }
+function parseRent(v) {
+  if (v && typeof v === 'object' && v._) v = v._;
+  if (v && typeof v === 'object') return 0;
+  const n = convertNumber(v);
+  return typeof n === 'number' ? n : 0;
+}
+function logChanges(oldData, newData) {
+  return Object.keys(newData).reduce((arr, k) => {
+    const o = oldData[k];
+    const n = newData[k];
+    if (JSON.stringify(o) !== JSON.stringify(n))
+      arr.push({ field: k, oldValue: o, newValue: n });
+    return arr;
+  }, []);
 }
 
-// ----------------------  Credentials ------------------------
+/* ---------- credentials ----------------- */
 const { ONSITE_USERNAME, ONSITE_PASSWORD } = process.env;
 
-// ----------------------  Property endpoints -----------------
+/* ---------- property endpoints ---------- */
 const propertyEndpoints = [
   {
     name: 'NOLANMAINS',
@@ -100,7 +116,7 @@ const propertyEndpoints = [
   },
 ];
 
-// ----------------------  OnSite helpers ---------------------
+/* ---------- OnSite helpers -------------- */
 async function fetchXML(url) {
   logger.info(`📡 GET ${url}`);
   const { data } = await axios.get(url, {
@@ -109,86 +125,90 @@ async function fetchXML(url) {
   });
   return data;
 }
-
 function parseXML(xml) {
-  return new Promise((res, rej) => {
-    xml2js.parseString(xml, { explicitArray: false }, (err, obj) => err ? rej(err) : res(obj));
-  });
+  return new Promise((res, rej) =>
+    xml2js.parseString(xml, { explicitArray: false }, (e, o) =>
+      e ? rej(e) : res(o)
+    )
+  );
 }
 
-// ----------------------  Webflow helpers --------------------
+/* ---------- Webflow helpers ------------- */
 async function fetchAllWebflowData(collectionId, token, retry = 3) {
-  logger.info(`⬇️  Pulling Webflow items ${collectionId}`);
-  let items = [], offset = 0, limit = 100;
-  while (true) {
-    const resp = await fetch(`https://api.webflow.com/v2/collections/${collectionId}/items?offset=${offset}&limit=${limit}`, {
-      headers: { Authorization: `Bearer ${token}`, accept: 'application/json' },
-    });
-    if (!resp.ok) {
-      if (resp.status === 429 && retry) {
-        const wait = Number(resp.headers.get('Retry-After') || 1);
-        logger.warn(`Rate‑limited, retry in ${wait}s`);
-        await new Promise(r => setTimeout(r, wait * 1000));
+  logger.info(`⬇️  Pull Webflow items ${collectionId}`);
+  let items = [];
+  for (let offset = 0;; offset += 100) {
+    const r = await fetch(
+      `https://api.webflow.com/v2/collections/${collectionId}/items?offset=${offset}&limit=100`,
+      { headers: { Authorization: `Bearer ${token}`, accept: 'application/json' } }
+    );
+    if (!r.ok) {
+      if (r.status === 429 && retry) {
+        const wait = Number(r.headers.get('Retry-After') || 1);
+        logger.warn(`Rate-limited, retry in ${wait}s`);
+        await new Promise(d => setTimeout(d, wait * 1000));
         return fetchAllWebflowData(collectionId, token, retry - 1);
       }
-      throw new Error(`Webflow GET failed ${resp.status}`);
+      throw new Error(`Webflow GET ${r.status}`);
     }
-    const { items: batch } = await resp.json();
+    const { items: batch } = await r.json();
     items = items.concat(batch);
-    if (batch.length < limit) break;
-    offset += limit;
+    if (batch.length < 100) break;
   }
   return items;
 }
-
-function logChanges(oldData, newData) {
-  return Object.keys(newData).reduce((arr, k) => {
-    const oldV = oldData[k];
-    const newV = newData[k];
-    if (JSON.stringify(oldV) !== JSON.stringify(newV)) arr.push({ field: k, oldValue: oldV, newValue: newV });
-    return arr;
-  }, []);
-}
-
 async function updateWebflowItem(id, collectionId, fieldData, token, retry = 3) {
-  const url = `https://api.webflow.com/v2/collections/${collectionId}/items/${id}`;
-  const resp = await fetch(url, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fieldData }),
-  });
-  if (!resp.ok) {
-    if (resp.status === 429 && retry) {
-      const wait = Number(resp.headers.get('Retry-After') || 1);
-      logger.warn(`Rate‑limited update, retry ${wait}s`);
-      await new Promise(r => setTimeout(r, wait * 1000));
+  const r = await fetch(
+    `https://api.webflow.com/v2/collections/${collectionId}/items/${id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fieldData }),
+    }
+  );
+  if (!r.ok) {
+    if (r.status === 429 && retry) {
+      const wait = Number(r.headers.get('Retry-After') || 1);
+      logger.warn(`Rate-limited PATCH, retry in ${wait}s`);
+      await new Promise(d => setTimeout(d, wait * 1000));
       return updateWebflowItem(id, collectionId, fieldData, token, retry - 1);
     }
-    throw new Error(`PATCH ${url} ${resp.status}`);
+    throw new Error(`PATCH ${r.status}`);
   }
   return true;
 }
-
-function roundUp(n) { return typeof n === 'number' ? Math.ceil(n) : n; }
-function getStyleIdValue(f) { return typeof f === 'object' && f ? f._ : f; }
-function parseRent(v) {
-  if (v && typeof v === 'object' && v._) v = v._;
-  if (v && typeof v === 'object') return 0;
-  const n = convertNumber(v);
-  return typeof n === 'number' ? n : 0;
+async function publishUpdates(siteId, token, customDomainIds = []) {
+  const r = await fetch(`https://api.webflow.com/v2/sites/${siteId}/publish`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      publishToWebflowSubdomain: true,
+      customDomains: customDomainIds,
+    }),
+  });
+  if (!r.ok) throw new Error(`Publish ${await r.text()}`);
+  return true;
 }
 
-// ----------------------  Units / floorplans -----------------
+/* ---------- processors ------------------ */
 async function updateUnits(apartment, collectionId, items, token) {
-  const { allUnits = [], availableUnits = [] } = apartment;
-  const avail = availableUnits.map(u => u['apartment-num']?.toLowerCase());
-  for (const unit of allUnits) {
+  const avail = (apartment.availableUnits || []).map(
+    u => u['apartment-num']?.toLowerCase()
+  );
+  for (const unit of apartment.allUnits || []) {
     const num = unit['apartment-num'];
     if (!num) continue;
     const slug = generateSlug(num);
     const item = items.find(i => i.fieldData.slug === slug);
     if (!item) continue;
-
     const newData = {
       'available-date': convertDate(unit['available-date']),
       'effective-rent-amount': roundUp(convertNumber(unit['effective-rent-amount'])),
@@ -196,11 +216,10 @@ async function updateUnits(apartment, collectionId, items, token) {
       'show-online': convertBoolean(avail.includes(num.toLowerCase())),
     };
     if (!logChanges(item.fieldData, newData).length) continue;
-    logger.info(`Updating unit ${slug}`);
+    logger.info(`🏠 Updating unit ${slug}`);
     await updateWebflowItem(item.id, collectionId, newData, token);
   }
 }
-
 async function updateFloorPlans(apartment, collectionId, items, token) {
   if (apartment.property !== 'ALVERA') return;
   for (const fp of apartment.floorplans || []) {
@@ -214,71 +233,72 @@ async function updateFloorPlans(apartment, collectionId, items, token) {
       'available-units-count': convertNumber(fp['num-available']) || 0,
     };
     if (!logChanges(item.fieldData, newData).length) continue;
-    logger.info(`Updating floorplan ${styleId}`);
+    logger.info(`🏢 Updating floorplan ${styleId}`);
     await updateWebflowItem(item.id, collectionId, newData, token);
   }
 }
 
-// ----------------------  Publish helper ---------------------
-async function publishUpdates(siteId, token, customDomainIds = []) {
-  const resp = await fetch(`https://api.webflow.com/v2/sites/${siteId}/publish`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ publishToWebflowSubdomain: true, customDomains: customDomainIds }),
-  });
-  if (!resp.ok) throw new Error(`Publish failed ${await resp.text()}`);
-  return true;
-}
-
-// ----------------------  Orchestration ----------------------
+/* ---------- orchestration --------------- */
 async function fetchApartmentData() {
   const out = [];
   for (const p of propertyEndpoints) {
     try {
-      const unitsXML = await fetchXML(p.unitsUrl);
+      logger.info(`🔄 Fetching OnSite data for ${p.name}`);
+      const [unitsXML, availXML, fpXML] = await Promise.all([
+        fetchXML(p.unitsUrl),
+        fetchXML(`${p.unitsUrl}?available_only=true`),
+        fetchXML(p.floorplansUrl),
+      ]);
       const unitsData = await parseXML(unitsXML);
-      const availXML = await fetchXML(`${p.unitsUrl}?available_only=true`);
       const availData = await parseXML(availXML);
-      const fpXML = await fetchXML(p.floorplansUrl);
-      const fpData = await parseXML(fpXML);
-      const rawStyles = fpData?.property?.['unit-styles']?.['unit-style'] || [];
+      const fpData    = await parseXML(fpXML);
       out.push({
         property: p.name,
         allUnits: [].concat(unitsData.units.unit || []),
         availableUnits: [].concat(availData.units.unit || []),
-        floorplans: [].concat(rawStyles),
+        floorplans:
+          [].concat(fpData?.property?.['unit-styles']?.['unit-style'] || []),
         ...p,
       });
     } catch (err) {
-      logger.error(`Failed fetching for ${p.name}:`, err.message);
+      logger.error(`❌ Failed OnSite fetch for ${p.name}:`, err.message);
     }
   }
   return out;
 }
-
 async function updateWebflowCollections(apartments) {
   for (const a of apartments) {
-    const items = await fetchAllWebflowData(a.apartmentsCollectionId, a.webflowApiKey);
+    const items = await fetchAllWebflowData(
+      a.apartmentsCollectionId,
+      a.webflowApiKey
+    );
     await updateUnits(a, a.apartmentsCollectionId, items, a.webflowApiKey);
     if (a.property === 'ALVERA') {
-      const fps = await fetchAllWebflowData(a.floorplansCollectionId, a.webflowApiKey);
+      const fps = await fetchAllWebflowData(
+        a.floorplansCollectionId,
+        a.webflowApiKey
+      );
       await updateFloorPlans(a, a.floorplansCollectionId, fps, a.webflowApiKey);
     }
     await publishUpdates(a.siteId, a.webflowApiKey, a.customDomains);
   }
 }
-
 async function main() {
-  logger.info('▶︎ OnSite sync start');
-  const apartments = await fetchApartmentData();
-  await updateWebflowCollections(apartments);
-  logger.info('✔︎ OnSite sync done');
+  try {
+    logger.info('▶︎ OnSite sync start');
+    const apartments = await fetchApartmentData();
+    await updateWebflowCollections(apartments);
+    logger.info('✔︎ OnSite sync done');
+  } catch (err) {
+    logger.error('❌ OnSite sync failed:', err);
+  }
 }
 
+/* ---------- cron ------------------------ */
 cron.schedule('*/15 * * * *', () => {
-  logger.info('⏰ Cron triggered');
+  logger.info('⏰ OnSite cron triggered');
   main();
 });
 
-// Uncomment to run immediately in dev
+// Uncomment to run once immediately for testing
 // main();
