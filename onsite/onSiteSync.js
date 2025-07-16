@@ -5,13 +5,13 @@
  ************************************************/
 
 /* ───── external libraries ───── */
-const fetch  = require('node-fetch');   // Webflow API
-const axios  = require('axios');        // OnSite XML feeds
+const fetch = require('node-fetch');   // Webflow API
+const axios = require('axios');        // OnSite XML feeds
 const xml2js = require('xml2js');       // XML → JS
-const cron   = require('node-cron');    // scheduler
+const cron = require('node-cron');    // scheduler
 
 /* ───── tiny logger (console-based) ───── */
-const LEVELS  = { error: 0, warn: 1, info: 2, debug: 3 };
+const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const CURRENT = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.info;
 function log(level, ...args) {
   if (LEVELS[level] > CURRENT) return;
@@ -19,8 +19,8 @@ function log(level, ...args) {
 }
 const logger = {
   error: (...a) => log('error', ...a),
-  warn : (...a) => log('warn' , ...a),
-  info : (...a) => log('info' , ...a),
+  warn: (...a) => log('warn', ...a),
+  info: (...a) => log('info', ...a),
   debug: (...a) => log('debug', ...a),
 };
 logger.info('📣 OnSite sync script booted');
@@ -67,42 +67,42 @@ const { ONSITE_USERNAME, ONSITE_PASSWORD } = process.env;
 const propertyEndpoints = [
   {
     name: 'NOLANMAINS',
-    unitsUrl:      'https://www.on-site.com/web/api/properties/567452/units.xml',
+    unitsUrl: 'https://www.on-site.com/web/api/properties/567452/units.xml',
     floorplansUrl: 'https://www.on-site.com/web/api/properties/567452.xml',
-    webflowApiKey:            process.env.NOLANMAINS_WEBFLOW_API_KEY,
-    apartmentsCollectionId:   process.env.NOLANMAINS_APARTMENTS_COLLECTION_ID,
-    floorplansCollectionId:   process.env.NOLANMAINS_FLOORPLANS_COLLECTION_ID,
-    siteId:                   process.env.NOLANMAINS_SITE_ID,
+    webflowApiKey: process.env.NOLANMAINS_WEBFLOW_API_KEY,
+    apartmentsCollectionId: process.env.NOLANMAINS_APARTMENTS_COLLECTION_ID,
+    floorplansCollectionId: process.env.NOLANMAINS_FLOORPLANS_COLLECTION_ID,
+    siteId: process.env.NOLANMAINS_SITE_ID,
     customDomains: ['66db288b0e91e910a34cb876'],
   },
   {
     name: 'ALVERA',
-    unitsUrl:      'https://www.on-site.com/web/api/properties/567445/units.xml',
+    unitsUrl: 'https://www.on-site.com/web/api/properties/567445/units.xml',
     floorplansUrl: 'https://www.on-site.com/web/api/properties/567445.xml',
-    webflowApiKey:            process.env.ALVERA_WEBFLOW_API_KEY,
-    apartmentsCollectionId:   process.env.ALVERA_APARTMENTS_COLLECTION_ID,
-    floorplansCollectionId:   process.env.ALVERA_FLOORPLANS_COLLECTION_ID,
-    siteId:                   process.env.ALVERA_SITE_ID,
+    webflowApiKey: process.env.ALVERA_WEBFLOW_API_KEY,
+    apartmentsCollectionId: process.env.ALVERA_APARTMENTS_COLLECTION_ID,
+    floorplansCollectionId: process.env.ALVERA_FLOORPLANS_COLLECTION_ID,
+    siteId: process.env.ALVERA_SITE_ID,
     customDomains: ['62edf2bf53f04db521620dfb'],
   },
   {
     name: 'ZENITH',
-    unitsUrl:      'https://www.on-site.com/web/api/properties/567457/units.xml',
+    unitsUrl: 'https://www.on-site.com/web/api/properties/567457/units.xml',
     floorplansUrl: 'https://www.on-site.com/web/api/properties/567457.xml',
-    webflowApiKey:            process.env.ZENITH_WEBFLOW_API_KEY,
-    apartmentsCollectionId:   process.env.ZENITH_APARTMENTS_COLLECTION_ID,
-    floorplansCollectionId:   process.env.ZENITH_FLOORPLANS_COLLECTION_ID,
-    siteId:                   process.env.ZENITH_SITE_ID,
+    webflowApiKey: process.env.ZENITH_WEBFLOW_API_KEY,
+    apartmentsCollectionId: process.env.ZENITH_APARTMENTS_COLLECTION_ID,
+    floorplansCollectionId: process.env.ZENITH_FLOORPLANS_COLLECTION_ID,
+    siteId: process.env.ZENITH_SITE_ID,
     customDomains: ['67225edaa64d92c89b25556f'],
   },
   {
     name: 'THEWALKWAY',
-    unitsUrl:      'https://www.on-site.com/web/api/properties/567456/units.xml',
+    unitsUrl: 'https://www.on-site.com/web/api/properties/567456/units.xml',
     floorplansUrl: 'https://www.on-site.com/web/api/properties/567456.xml',
-    webflowApiKey:            process.env.THEWALKWAY_WEBFLOW_API_KEY,
-    apartmentsCollectionId:   process.env.THEWALKWAY_APARTMENTS_COLLECTION_ID,
-    floorplansCollectionId:   process.env.THEWALKWAY_FLOORPLANS_COLLECTION_ID,
-    siteId:                   process.env.THEWALKWAY_SITE_ID,
+    webflowApiKey: process.env.THEWALKWAY_WEBFLOW_API_KEY,
+    apartmentsCollectionId: process.env.THEWALKWAY_APARTMENTS_COLLECTION_ID,
+    floorplansCollectionId: process.env.THEWALKWAY_FLOORPLANS_COLLECTION_ID,
+    siteId: process.env.THEWALKWAY_SITE_ID,
     customDomains: ['623532ef11b2ba7054bbca19'],
   },
 ];
@@ -128,7 +128,7 @@ const parseXML = xml =>
 /* ───── Webflow helpers ───── */
 async function fetchAllWebflowData(collectionId, token, retry = 3) {
   let items = [];
-  for (let offset = 0;; offset += 100) {
+  for (let offset = 0; ; offset += 100) {
     const res = await fetch(
       `https://api.webflow.com/v2/collections/${collectionId}/items?offset=${offset}&limit=100`,
       { headers: { Authorization: `Bearer ${token}`, accept: 'application/json' } }
@@ -205,10 +205,10 @@ async function updateUnits(apartment, collectionId, items, token) {
     if (!item) continue;
 
     const newData = {
-      'available-date':        convertDate(unit['available-date']),
+      'available-date': convertDate(unit['available-date']),
       'effective-rent-amount': roundUp(convertNumber(unit['effective-rent-amount'])),
-      'original-rent-amount':  roundUp(convertNumber(unit['rent-amount'])),
-      'show-online':           convertBoolean(avail.includes(num.toLowerCase())),
+      'original-rent-amount': roundUp(convertNumber(unit['rent-amount'])),
+      'show-online': convertBoolean(avail.includes(num.toLowerCase())),
     };
     if (!logChanges(item.fieldData, newData).length) continue;
 
@@ -227,8 +227,8 @@ async function updateFloorPlans(apartment, collectionId, items, token) {
     if (!item) continue;
 
     const newData = {
-      'minimum-rent':          parseRent(fp['min-rent']),
-      'maximum-rent':          parseRent(fp['max-rent']),
+      'minimum-rent': parseRent(fp['min-rent']),
+      'maximum-rent': parseRent(fp['max-rent']),
       'available-units-count': convertNumber(fp['num-available']) || 0,
     };
     if (!logChanges(item.fieldData, newData).length) continue;
@@ -253,15 +253,15 @@ async function fetchApartmentData() {
 
       const unitsData = await parseXML(unitsXML);
       const availData = await parseXML(availXML);
-      const fpData    = await parseXML(fpXML);
+      const fpData = await parseXML(fpXML);
       const rawStyles =
         fpData?.property?.['unit-styles']?.['unit-style'] || [];
 
       result.push({
         property: p.name,
-        allUnits:         [].concat(unitsData.units.unit      || []),
-        availableUnits:   [].concat(availData.units.unit      || []),
-        floorplans:       [].concat(rawStyles                 || []),
+        allUnits: [].concat(unitsData.units.unit || []),
+        availableUnits: [].concat(availData.units.unit || []),
+        floorplans: [].concat(rawStyles || []),
         ...p, // keep keys from endpoint definition
       });
     } catch (err) {
