@@ -302,11 +302,5 @@ async function main() {
   }
 }
 
-/* ───── cron schedule ───── */
-cron.schedule('*/15 * * * *', () => {
-  logger.info('⏰ OnSite cron triggered');
-  main();
-});
-
 module.exports = { main };
 // main();
