@@ -85,7 +85,7 @@ const propertyEndpoints = [
     siteId: process.env.ALVERA_SITE_ID,
     customDomains: ['62edf2bf53f04db521620dfb'],
   },
-  {
+  /* ─────{
     name: 'ZENITH',
     unitsUrl: 'https://www.on-site.com/web/api/properties/567457/units.xml',
     floorplansUrl: 'https://www.on-site.com/web/api/properties/567457.xml',
@@ -94,7 +94,7 @@ const propertyEndpoints = [
     floorplansCollectionId: process.env.ZENITH_FLOORPLANS_COLLECTION_ID,
     siteId: process.env.ZENITH_SITE_ID,
     customDomains: ['67225edaa64d92c89b25556f'],
-  },
+  },───── */
   {
     name: 'THEWALKWAY',
     unitsUrl: 'https://www.on-site.com/web/api/properties/567456/units.xml',
