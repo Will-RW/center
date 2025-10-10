@@ -57,7 +57,7 @@ if (require.main === module) {
       "yardi@wearewherever.com",                    // or from .env if you like
       process.env.RENTCAFE_VENDOR_TOKEN_SATURDAY,   // "c0cd6176-a144-4cff-978a-20fcc9f1f7c3"
       process.env.RENTCAFE_COMPANY_CODE_SATURDAY,   // "c00000089567"
-      process.env.RENTCAFE_PROPERTY_CODE_REVELRY    // or process.env.RENTCAFE_PROPERTY_CODE_REVELRY
+      process.env.RENTCAFE_PROPERTY_CODE_ZENITHDCHS    // or process.env.RENTCAFE_PROPERTY_CODE_REVELRY
     );
   })();
 }
