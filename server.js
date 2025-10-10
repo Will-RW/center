@@ -8,20 +8,24 @@ const app = express();
 app.get('/wized.js', require('./wized/route'));
 
 /* --------------------  RentCafe → Webflow  ---------------------- */
+// Feature flag: set ENABLE_RENTCAFE=1 to re-enable later
 const ENABLE_RENTCAFE = process.env.ENABLE_RENTCAFE === '1';
 
 if (ENABLE_RENTCAFE) {
   const { runSyncJob: rentCafeJob } = require('./rentcafe/job');
+  // schedule only when enabled
   cron.schedule('0 */4 * * *', rentCafeJob);                 // every 4 h
   app.get('/sync-rentcafe', async (_, res) => {
     await rentCafeJob();
     res.end('RentCafe sync complete');
   });
+  console.log('[boot] RentCafe: enabled');
 } else {
-  // Keep the route around but make it inert (helpful if something pings it)
+  // do NOT require('./rentcafe/job'); keep fully inert
   app.get('/sync-rentcafe', (_, res) => {
     res.status(410).end('RentCafe sync is temporarily disabled');
   });
+  console.log('[boot] RentCafe: disabled');
 }
 
 /* --------------------  On-Site → Webflow  ----------------------- */
