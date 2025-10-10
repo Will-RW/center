@@ -14,7 +14,7 @@ async function runSyncJob () {
       'yardi@wearewherever.com',
       process.env.RENTCAFE_VENDOR_TOKEN_SATURDAY,
       process.env.RENTCAFE_COMPANY_CODE_SATURDAY,
-      process.env.RENTCAFE_PROPERTY_CODE_REVELRY
+      process.env.RENTCAFE_PROPERTY_CODE_ZENITHDCHS
     );
   } catch (err) {
     console.error('[RentCafe] token / fetch failed →', err?.response?.data || err);
@@ -24,7 +24,7 @@ async function runSyncJob () {
   /* 2 – current Webflow state */
   const items = await getAllItemsFromWebflow(
     process.env.WEBFLOW_TOKEN_REVELRY,
-    process.env.WEBFLOW_COLLECTION_ID_REVELRY
+    process.env.WEBFLOW_COLLECTION_ID_ZENITHDCHS
   );
 
   /* 3 – diff + push */
@@ -32,7 +32,7 @@ async function runSyncJob () {
     data.apartmentAvailabilities || [],
     items,
     process.env.WEBFLOW_TOKEN_REVELRY,
-    process.env.WEBFLOW_COLLECTION_ID_REVELRY
+    process.env.WEBFLOW_COLLECTION_ID_ZENITHDCHS
   );
 
   console.log(`[RentCafe] ✓ sync done ${new Date().toISOString()}`);
