@@ -23,7 +23,7 @@ async function runSyncJob () {
 
   /* 2 – current Webflow state */
   const items = await getAllItemsFromWebflow(
-    process.env.WEBFLOW_TOKEN_REVELRY,
+    process.env.WEBFLOW_TOKEN_ZENITHDCHS,
     process.env.WEBFLOW_COLLECTION_ID_ZENITHDCHS
   );
 
@@ -31,7 +31,7 @@ async function runSyncJob () {
   await syncWithWebflow(
     data.apartmentAvailabilities || [],
     items,
-    process.env.WEBFLOW_TOKEN_REVELRY,
+    process.env.WEBFLOW_TOKEN_ZENITHDCHS,
     process.env.WEBFLOW_COLLECTION_ID_ZENITHDCHS
   );
 
