@@ -7,8 +7,7 @@
 /* ───── external libraries ───── */
 const fetch = require('node-fetch');   // Webflow API
 const axios = require('axios');        // OnSite XML feeds
-const xml2js = require('xml2js');       // XML → JS
-const cron = require('node-cron');    // scheduler
+const xml2js = require('xml2js');      // XML → JS
 
 /* ───── tiny logger (console-based) ───── */
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
@@ -19,8 +18,8 @@ function log(level, ...args) {
 }
 const logger = {
   error: (...a) => log('error', ...a),
-  warn: (...a) => log('warn', ...a),
-  info: (...a) => log('info', ...a),
+  warn:  (...a) => log('warn',  ...a),
+  info:  (...a) => log('info',  ...a),
   debug: (...a) => log('debug', ...a),
 };
 logger.info('📣 OnSite sync script booted');
@@ -42,8 +41,7 @@ const convertDate = v => {
   const d = new Date(v);
   return isNaN(d) ? null : d.toISOString();
 };
-const generateSlug = s =>
-  String(s || '').trim().toLowerCase().replace(/\s+/g, '-');
+const generateSlug = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '-');
 const roundUp = n => (typeof n === 'number' ? Math.ceil(n) : n);
 const getStyleIdValue = f => (typeof f === 'object' && f ? f._ : f);
 const parseRent = v => {
@@ -118,44 +116,46 @@ const fetchXML = async url => {
 };
 const parseXML = xml =>
   new Promise((resolve, reject) =>
-    xml2js.parseString(
-      xml,
-      { explicitArray: false },
-      (err, res) => (err ? reject(err) : resolve(res))
-    )
+    xml2js.parseString(xml, { explicitArray: false }, (err, res) => (err ? reject(err) : resolve(res)))
   );
 
 /* ───── Webflow helpers ───── */
-async function fetchAllWebflowData(collectionId, token, retry = 3) {
+async function fetchAllWebflowData(collectionId, token, label, retry = 3) {
+  if (!token) throw new Error(`Webflow token missing for ${label}`);
+  if (!collectionId) throw new Error(`CollectionId missing for ${label}`);
+
   let items = [];
   for (let offset = 0; ; offset += 100) {
     const res = await fetch(
       `https://api.webflow.com/v2/collections/${collectionId}/items?offset=${offset}&limit=100`,
-      { headers: { Authorization: `Bearer ${token}`, accept: 'application/json' } }
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
     );
     if (!res.ok) {
       if (res.status === 429 && retry) {
         const wait = Number(res.headers.get('Retry-After') || 1);
         await new Promise(r => setTimeout(r, wait * 1000));
-        return fetchAllWebflowData(collectionId, token, retry - 1);
+        retry--;
+        continue;
       }
-      throw new Error(`Webflow GET ${res.status}`);
+      const body = await res.text().catch(() => '');
+      throw new Error(`Webflow GET ${res.status} for ${label} (collection ${collectionId}): ${body || '(no body)'}`);
     }
-    const { items: batch } = await res.json();
+    const json = await res.json();
+    const batch = json.items || [];
     items = items.concat(batch);
     if (batch.length < 100) break;
   }
   return items;
 }
 
-async function updateWebflowItem(id, collectionId, fieldData, token, retry = 3) {
+async function updateWebflowItem(id, collectionId, fieldData, token, label, retry = 3) {
   const res = await fetch(
     `https://api.webflow.com/v2/collections/${collectionId}/items/${id}`,
     {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${token}`,
-        accept: 'application/json',
+        Accept: 'application/json',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ fieldData }),
@@ -165,19 +165,23 @@ async function updateWebflowItem(id, collectionId, fieldData, token, retry = 3) 
     if (res.status === 429 && retry) {
       const wait = Number(res.headers.get('Retry-After') || 1);
       await new Promise(r => setTimeout(r, wait * 1000));
-      return updateWebflowItem(id, collectionId, fieldData, token, retry - 1);
+      return updateWebflowItem(id, collectionId, fieldData, token, label, retry - 1);
     }
-    throw new Error(`PATCH ${res.status}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`PATCH ${res.status} for ${label} (item ${id} in ${collectionId}): ${body || '(no body)'}`);
   }
   return true;
 }
 
-async function publishUpdates(siteId, token, customDomains = []) {
+async function publishUpdates(siteId, token, customDomains = [], label = '') {
+  if (!token) throw new Error(`Webflow token missing for ${label}`);
+  if (!siteId) throw new Error(`siteId missing for ${label}`);
+
   const res = await fetch(`https://api.webflow.com/v2/sites/${siteId}/publish`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
-      accept: 'application/json',
+      Accept: 'application/json',
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -186,16 +190,14 @@ async function publishUpdates(siteId, token, customDomains = []) {
     }),
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Publish ${res.status}: ${body}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`Publish ${res.status} for ${label} (site ${siteId}): ${body || '(no body)'}`);
   }
 }
 
 /* ───── processors ───── */
-async function updateUnits(apartment, collectionId, items, token) {
-  const avail = (apartment.availableUnits || []).map(
-    u => u['apartment-num']?.toLowerCase()
-  );
+async function updateUnits(apartment, collectionId, items, token, label) {
+  const avail = (apartment.availableUnits || []).map(u => u['apartment-num']?.toLowerCase());
   for (const unit of apartment.allUnits || []) {
     const num = unit['apartment-num'];
     if (!num) continue;
@@ -212,12 +214,12 @@ async function updateUnits(apartment, collectionId, items, token) {
     };
     if (!logChanges(item.fieldData, newData).length) continue;
 
-    logger.info(`🏠 Updating unit ${slug}`);
-    await updateWebflowItem(item.id, collectionId, newData, token);
+    logger.info(`🏠 Updating unit ${slug} [${label}]`);
+    await updateWebflowItem(item.id, collectionId, newData, token, `${label} unit ${slug}`);
   }
 }
 
-async function updateFloorPlans(apartment, collectionId, items, token) {
+async function updateFloorPlans(apartment, collectionId, items, token, label) {
   if (apartment.property !== 'ALVERA') return;
   for (const fp of apartment.floorplans || []) {
     const styleId = String(getStyleIdValue(fp['style-id']) || '');
@@ -233,8 +235,8 @@ async function updateFloorPlans(apartment, collectionId, items, token) {
     };
     if (!logChanges(item.fieldData, newData).length) continue;
 
-    logger.info(`🏢 Updating floorplan ${styleId}`);
-    await updateWebflowItem(item.id, collectionId, newData, token);
+    logger.info(`🏢 Updating floorplan ${styleId} [${label}]`);
+    await updateWebflowItem(item.id, collectionId, newData, token, `${label} floorplan ${styleId}`);
   }
 }
 
@@ -254,13 +256,12 @@ async function fetchApartmentData() {
       const unitsData = await parseXML(unitsXML);
       const availData = await parseXML(availXML);
       const fpData = await parseXML(fpXML);
-      const rawStyles =
-        fpData?.property?.['unit-styles']?.['unit-style'] || [];
+      const rawStyles = fpData?.property?.['unit-styles']?.['unit-style'] || [];
 
       result.push({
         property: p.name,
-        allUnits: [].concat(unitsData.units.unit || []),
-        availableUnits: [].concat(availData.units.unit || []),
+        allUnits: [].concat(unitsData?.units?.unit || []),
+        availableUnits: [].concat(availData?.units?.unit || []),
         floorplans: [].concat(rawStyles || []),
         ...p, // keep keys from endpoint definition
       });
@@ -273,21 +274,21 @@ async function fetchApartmentData() {
 
 async function updateWebflowCollections(apartments) {
   for (const a of apartments) {
-    const items = await fetchAllWebflowData(
-      a.apartmentsCollectionId,
-      a.webflowApiKey
-    );
-    await updateUnits(a, a.apartmentsCollectionId, items, a.webflowApiKey);
+    try {
+      const labelApts = `${a.name} (apartments)`;
+      const items = await fetchAllWebflowData(a.apartmentsCollectionId, a.webflowApiKey, labelApts);
+      await updateUnits(a, a.apartmentsCollectionId, items, a.webflowApiKey, labelApts);
 
-    if (a.property === 'ALVERA' && a.floorplansCollectionId) {
-      const fps = await fetchAllWebflowData(
-        a.floorplansCollectionId,
-        a.webflowApiKey
-      );
-      await updateFloorPlans(a, a.floorplansCollectionId, fps, a.webflowApiKey);
+      if (a.property === 'ALVERA' && a.floorplansCollectionId) {
+        const labelFPs = `${a.name} (floorplans)`;
+        const fps = await fetchAllWebflowData(a.floorplansCollectionId, a.webflowApiKey, labelFPs);
+        await updateFloorPlans(a, a.floorplansCollectionId, fps, a.webflowApiKey, labelFPs);
+      }
+
+      await publishUpdates(a.siteId, a.webflowApiKey, a.customDomains || [], a.name);
+    } catch (err) {
+      logger.error(`❌ Webflow update failed for ${a.name}:`, err.message);
     }
-
-    await publishUpdates(a.siteId, a.webflowApiKey, a.customDomains || []);
   }
 }
 
@@ -303,4 +304,4 @@ async function main() {
 }
 
 module.exports = { main };
-// main();
+// main(); // uncomment for ad-hoc local run
