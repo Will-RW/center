@@ -8,16 +8,25 @@ const app = express();
 app.get('/wized.js', require('./wized/route'));
 
 /* --------------------  RentCafe → Webflow  ---------------------- */
-const { runSyncJob: rentCafeJob } = require('./rentcafe/job');
-cron.schedule('0 */4 * * *', rentCafeJob);                 // every 4 h
-app.get('/sync-rentcafe', async (_, res) => {
-  await rentCafeJob();
-  res.end('RentCafe sync complete');
-});
+const ENABLE_RENTCAFE = process.env.ENABLE_RENTCAFE === '1';
+
+if (ENABLE_RENTCAFE) {
+  const { runSyncJob: rentCafeJob } = require('./rentcafe/job');
+  cron.schedule('0 */4 * * *', rentCafeJob);                 // every 4 h
+  app.get('/sync-rentcafe', async (_, res) => {
+    await rentCafeJob();
+    res.end('RentCafe sync complete');
+  });
+} else {
+  // Keep the route around but make it inert (helpful if something pings it)
+  app.get('/sync-rentcafe', (_, res) => {
+    res.status(410).end('RentCafe sync is temporarily disabled');
+  });
+}
 
 /* --------------------  On-Site → Webflow  ----------------------- */
 const { main: onSiteJob } = require('./onsite/onSiteSync');
-cron.schedule('*/15 * * * *', onSiteJob);                  // every 15 min
+cron.schedule('*/15 * * * *', onSiteJob);                    // every 15 min
 app.get('/sync-onsite', async (_, res) => {
   await onSiteJob();
   res.end('On-Site sync complete');
