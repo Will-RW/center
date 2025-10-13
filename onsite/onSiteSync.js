@@ -5,7 +5,7 @@
  ************************************************/
 
 /* ───── external libraries ───── */
-const fetch = require('node-fetch');   // Webflow API
+const fetch = require('node-fetch');   // Webflow API (v2)
 const axios = require('axios');        // OnSite XML feeds
 const xml2js = require('xml2js');      // XML → JS
 
@@ -61,7 +61,7 @@ const logChanges = (oldData, newData) =>
 /* ───── env credentials ───── */
 const { ONSITE_USERNAME, ONSITE_PASSWORD } = process.env;
 
-/* ───── property endpoints ───── */
+/* ───── property endpoints (NO hard-coded domains) ───── */
 const propertyEndpoints = [
   {
     name: 'NOLANMAINS',
@@ -71,7 +71,6 @@ const propertyEndpoints = [
     apartmentsCollectionId: process.env.NOLANMAINS_APARTMENTS_COLLECTION_ID,
     floorplansCollectionId: process.env.NOLANMAINS_FLOORPLANS_COLLECTION_ID,
     siteId: process.env.NOLANMAINS_SITE_ID,
-    customDomains: ['66db288b0e91e910a34cb876'],
   },
   {
     name: 'ALVERA',
@@ -81,7 +80,6 @@ const propertyEndpoints = [
     apartmentsCollectionId: process.env.ALVERA_APARTMENTS_COLLECTION_ID,
     floorplansCollectionId: process.env.ALVERA_FLOORPLANS_COLLECTION_ID,
     siteId: process.env.ALVERA_SITE_ID,
-    customDomains: ['62edf2bf53f04db521620dfb'],
   },
   {
     name: 'ZENITH',
@@ -91,7 +89,6 @@ const propertyEndpoints = [
     apartmentsCollectionId: process.env.ZENITH_APARTMENTS_COLLECTION_ID,
     floorplansCollectionId: process.env.ZENITH_FLOORPLANS_COLLECTION_ID,
     siteId: process.env.ZENITH_SITE_ID,
-    customDomains: ['67225edaa64d92c89b25556f'],
   },
   {
     name: 'THEWALKWAY',
@@ -101,7 +98,6 @@ const propertyEndpoints = [
     apartmentsCollectionId: process.env.THEWALKWAY_APARTMENTS_COLLECTION_ID,
     floorplansCollectionId: process.env.THEWALKWAY_FLOORPLANS_COLLECTION_ID,
     siteId: process.env.THEWALKWAY_SITE_ID,
-    customDomains: ['623532ef11b2ba7054bbca19'],
   },
 ];
 
@@ -173,9 +169,43 @@ async function updateWebflowItem(id, collectionId, fieldData, token, label, retr
   return true;
 }
 
-async function publishUpdates(siteId, token, customDomains = [], label = '') {
+/* Fetch current custom-domain IDs at runtime */
+async function getCustomDomainIds(siteId, token) {
+  const res = await fetch(`https://api.webflow.com/v2/sites/${siteId}/custom-domains`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`domains ${res.status} for site ${siteId}: ${body || '(no body)'}`);
+  }
+  const { customDomains = [] } = await res.json();
+  return customDomains.map(d => d.id);
+}
+
+/* Publish with auto-discovered domains (no hard-coded IDs) */
+async function publishUpdates(siteId, token, opts = {}, label = '') {
   if (!token) throw new Error(`Webflow token missing for ${label}`);
   if (!siteId) throw new Error(`siteId missing for ${label}`);
+
+  const publishWebflowSubdomain = opts.publishWebflowSubdomain !== false; // default true
+  let customDomainIds = opts.customDomainIds; // 'AUTO' | string[] | undefined
+
+  if (customDomainIds === 'AUTO' || customDomainIds == null) {
+    try {
+      customDomainIds = await getCustomDomainIds(siteId, token);
+      logger.info(`[publish] ${label} domains: ${customDomainIds.length} found`);
+    } catch (e) {
+      logger.warn(`[publish] ${label} could not load custom domains: ${e.message}`);
+      customDomainIds = [];
+    }
+  }
+
+  const body = {
+    publishToWebflowSubdomain: !!publishWebflowSubdomain,
+    ...(Array.isArray(customDomainIds) && customDomainIds.length
+      ? { customDomains: customDomainIds }
+      : {}),
+  };
 
   const res = await fetch(`https://api.webflow.com/v2/sites/${siteId}/publish`, {
     method: 'POST',
@@ -184,14 +214,12 @@ async function publishUpdates(siteId, token, customDomains = [], label = '') {
       Accept: 'application/json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      publishToWebflowSubdomain: true,
-      customDomains,
-    }),
+    body: JSON.stringify(body),
   });
+
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Publish ${res.status} for ${label} (site ${siteId}): ${body || '(no body)'}`);
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Publish ${res.status} for ${label} (site ${siteId}): ${txt || '(no body)'}`);
   }
 }
 
@@ -285,7 +313,13 @@ async function updateWebflowCollections(apartments) {
         await updateFloorPlans(a, a.floorplansCollectionId, fps, a.webflowApiKey, labelFPs);
       }
 
-      await publishUpdates(a.siteId, a.webflowApiKey, a.customDomains || [], a.name);
+      // Publish to Webflow subdomain + current custom domains (auto-discovered)
+      await publishUpdates(
+        a.siteId,
+        a.webflowApiKey,
+        { publishWebflowSubdomain: true, customDomainIds: 'AUTO' },
+        a.name
+      );
     } catch (err) {
       logger.error(`❌ Webflow update failed for ${a.name}:`, err.message);
     }
@@ -304,4 +338,4 @@ async function main() {
 }
 
 module.exports = { main };
-// main(); // uncomment for ad-hoc local run
+// main(); // uncomment for local ad-hoc run
