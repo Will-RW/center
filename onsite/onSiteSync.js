@@ -171,7 +171,7 @@ async function updateWebflowItem(id, collectionId, fieldData, token, label, retr
 
 /* Fetch current custom-domain IDs at runtime */
 async function getCustomDomainIds(siteId, token) {
-  const res = await fetch(`https://api.webflow.com/v2/sites/${siteId}/custom-domains`, {
+  const res = await fetch(`https://api.webflow.com/v2/sites/${siteId}/custom_domains`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   });
   if (!res.ok) {
