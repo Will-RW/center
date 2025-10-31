@@ -2,7 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const cron    = require('node-cron');
-
+const prerenderRouter = require("./prerender-mw");
 const app = express();
 
 /* --------------------  CORS (for Framer editor/preview)  -------------------- */
@@ -63,6 +63,9 @@ app.get('/sync-onsite', async (_, res) => {
    The implementation lives in rentcafe/framerSync.js
 */
 app.use(require('./rentcafe/framerSync'));
+
+/* --------------------  Prerender  -------------------- */
+app.use("/__prerender", prerenderRouter);
 
 /* --------------------  health-check root  -------------------- */
 app.get('/', (_, res) => res.send('OK – unified service running'));
