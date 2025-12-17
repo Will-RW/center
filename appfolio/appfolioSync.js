@@ -6,6 +6,7 @@
  *     - effective-rent-amount
  *     - original-rent-amount
  *     - available-date (ISO string; if missing on AppFolio => TODAY)
+ *     - apply-link (unique Apply Now URL per unit)
  *
  * Requires:
  *   npm i cheerio
@@ -35,9 +36,15 @@ const APPFOLIO_URL =
   process.env.APPFOLIO_NOLANMAINS_URL ||
   'https://saturdayproperties.appfolio.com/listings/listings?filters[property_list]=nolan+mains';
 
+const APPFOLIO_BASE =
+  process.env.APPFOLIO_BASE_URL || 'https://saturdayproperties.appfolio.com';
+
 const WEBFLOW_TOKEN = process.env.NOLANMAINS_WEBFLOW_API_KEY;
 const COLLECTION_ID = process.env.NOLANMAINS_APARTMENTS_COLLECTION_ID;
 const SITE_ID = process.env.NOLANMAINS_SITE_ID;
+
+// Webflow field handle for your Link field ("Apply Link")
+const WEBFLOW_APPLY_LINK_FIELD = 'apply-link';
 
 /* ───── helpers ───── */
 const generateSlug = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '-');
@@ -68,11 +75,9 @@ function parseMoneyToNumber(text) {
 function todayIsoDate() {
   // Start of today in UTC, as ISO string
   const now = new Date();
-  return new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate()
-  )).toISOString();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  ).toISOString();
 }
 
 function parseAppfolioUsShortDateToISO(mdy) {
@@ -93,6 +98,15 @@ function parseAppfolioUsShortDateToISO(mdy) {
 
   const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function absolutizeUrl(href) {
+  const h = String(href || '').trim();
+  if (!h) return null;
+  if (/^https?:\/\//i.test(h)) return h;
+  // Ensure single slash between base and path
+  if (h.startsWith('/')) return `${APPFOLIO_BASE}${h}`;
+  return `${APPFOLIO_BASE}/${h}`;
 }
 
 /* ───── Webflow helpers ───── */
@@ -247,10 +261,14 @@ async function fetchAppFolioUnits() {
       .trim();
 
     const parsedIso = parseAppfolioUsShortDateToISO(availText);
-    const availableIso = parsedIso ?? todayIsoDate(); // NEW RULE: no date => today
+    const availableIso = parsedIso ?? todayIsoDate(); // no date => today
+
+    // Apply Now link (unique per unit)
+    const applyHref = $item.find('a.js-listing-apply').first().attr('href');
+    const applyUrl = absolutizeUrl(applyHref);
 
     const slug = generateSlug(unit);
-    map.set(slug, { unit, rent, availableIso, address });
+    map.set(slug, { unit, rent, availableIso, address, applyUrl });
   });
 
   logger.info(`✔︎ AppFolio parsed units: ${map.size}`);
@@ -272,6 +290,7 @@ async function updateUnitsFromAppFolio(webflowItems, unitMap, token, collectionI
         'effective-rent-amount': roundUp(hit.rent),
         'original-rent-amount': roundUp(hit.rent),
         'show-online': true,
+        [WEBFLOW_APPLY_LINK_FIELD]: hit.applyUrl ?? null,
       };
 
       const changes = logChanges(fields, newData);
@@ -282,8 +301,13 @@ async function updateUnitsFromAppFolio(webflowItems, unitMap, token, collectionI
       continue;
     }
 
-    // Not present on AppFolio page => hide + clear date
-    const newData = { 'show-online': false, 'available-date': null };
+    // Not present on AppFolio page => hide + clear date + clear apply link
+    const newData = {
+      'show-online': false,
+      'available-date': null,
+      [WEBFLOW_APPLY_LINK_FIELD]: null,
+    };
+
     const changes = logChanges(fields, newData);
     if (!changes.length) continue;
 
