@@ -5,7 +5,7 @@
  *     - show-online
  *     - effective-rent-amount
  *     - original-rent-amount
- *     - available-date   (ISO string like On-Site, or null)
+ *     - available-date (ISO string; if missing on AppFolio => TODAY)
  *
  * Requires:
  *   npm i cheerio
@@ -15,7 +15,7 @@ require('dotenv').config();
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 
-/* ───── tiny logger (console-based) ───── */
+/* ───── logger ───── */
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const CURRENT = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.info;
 function log(level, ...args) {
@@ -39,7 +39,7 @@ const WEBFLOW_TOKEN = process.env.NOLANMAINS_WEBFLOW_API_KEY;
 const COLLECTION_ID = process.env.NOLANMAINS_APARTMENTS_COLLECTION_ID;
 const SITE_ID = process.env.NOLANMAINS_SITE_ID;
 
-/* ───── utility helpers (match On-Site behavior) ───── */
+/* ───── helpers ───── */
 const generateSlug = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '-');
 const roundUp = n => (typeof n === 'number' ? Math.ceil(n) : n);
 
@@ -52,7 +52,7 @@ const logChanges = (oldData, newData) =>
   }, []);
 
 function parseUnitFromAddress(address) {
-  // From your HTML: "3945 Market Street Apt 206, Edina, MN 55424"
+  // "3945 Market Street Apt 206, Edina, MN 55424" -> "206"
   const m = String(address || '').match(/\bApt[-\s]*([A-Za-z0-9]+)\b/);
   return m ? m[1] : null;
 }
@@ -65,8 +65,18 @@ function parseMoneyToNumber(text) {
   return Number.isFinite(n) ? n : null;
 }
 
+function todayIsoDate() {
+  // Start of today in UTC, as ISO string
+  const now = new Date();
+  return new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate()
+  )).toISOString();
+}
+
 function parseAppfolioUsShortDateToISO(mdy) {
-  // AppFolio shows "12/26/25" (MM/DD/YY)
+  // "12/26/25" => "2025-12-26T00:00:00.000Z"
   const t = String(mdy || '').trim();
   if (!t) return null;
 
@@ -77,15 +87,15 @@ function parseAppfolioUsShortDateToISO(mdy) {
   const dd = m[2].padStart(2, '0');
   const yy = Number(m[3]);
 
-  // Assume 20xx for 00-49, 19xx for 50-99 (safe + deterministic)
-  const yyyy = yy < 50 ? `20${String(yy).padStart(2, '0')}` : `19${String(yy).padStart(2, '0')}`;
+  const yyyy = yy < 50
+    ? `20${String(yy).padStart(2, '0')}`
+    : `19${String(yy).padStart(2, '0')}`;
 
-  // Match On-Site: store ISO string
-  const iso = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
-  return isNaN(iso) ? null : iso.toISOString();
+  const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-/* ───── Webflow helpers (same pattern as On-Site) ───── */
+/* ───── Webflow helpers ───── */
 async function fetchAllWebflowData(collectionId, token, label, retry = 3) {
   if (!token) throw new Error(`Webflow token missing for ${label}`);
   if (!collectionId) throw new Error(`CollectionId missing for ${label}`);
@@ -189,7 +199,7 @@ async function publishUpdates(siteId, token, opts = {}, label = '') {
   }
 }
 
-/* ───── AppFolio HTML crawl + parse ───── */
+/* ───── AppFolio crawl + parse ───── */
 async function fetchAppFolioUnits() {
   logger.info(`🔄 Fetching AppFolio listings HTML: ${APPFOLIO_URL}`);
 
@@ -235,22 +245,19 @@ async function fetchAppFolioUnits() {
       .first()
       .text()
       .trim();
-    const availableIso = parseAppfolioUsShortDateToISO(availText); // ISO or null
+
+    const parsedIso = parseAppfolioUsShortDateToISO(availText);
+    const availableIso = parsedIso ?? todayIsoDate(); // NEW RULE: no date => today
 
     const slug = generateSlug(unit);
     map.set(slug, { unit, rent, availableIso, address });
   });
 
   logger.info(`✔︎ AppFolio parsed units: ${map.size}`);
-
-  // helpful debug: show a couple parsed rows
-  const sample = Array.from(map.entries()).slice(0, 3).map(([slug, v]) => ({ slug, ...v }));
-  logger.debug('sample parsed units:', JSON.stringify(sample, null, 2));
-
   return map;
 }
 
-/* ───── processor: update Webflow ───── */
+/* ───── apply AppFolio -> Webflow ───── */
 async function updateUnitsFromAppFolio(webflowItems, unitMap, token, collectionId, label) {
   for (const item of webflowItems) {
     const fields = item.fieldData || {};
@@ -285,7 +292,7 @@ async function updateUnitsFromAppFolio(webflowItems, unitMap, token, collectionI
   }
 }
 
-/* ───── orchestration ───── */
+/* ───── main job ───── */
 async function main() {
   const label = 'NOLANMAINS (AppFolio)';
   try {
